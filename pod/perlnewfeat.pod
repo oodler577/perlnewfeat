@@ -1,0 +1,95 @@
+=head1 NAME
+
+perlnrewfeat - Perl Starting Point For New Language Features
+
+=head1 DESCRIPTION
+
+This document attempts to guide individuals through a very thoughtful process
+regarding the addition planning and executing new features in Perl.
+
+=head1 CHOOSE YOUR ADVENTURE
+
+Adding a new feature to Perl is a lot of work, and there are many hidden
+costs. These will not be enumerated, rather it presents a guide to minimize
+wasted time for all who inevitably will be involved.
+
+The remainder of this document is intended to maximize the prototyping of new
+features, market testing of new features, and describe the various levels of
+C<promotion> that may occur. It's important to note, that the adoption of new
+features into the Perl environment that gets distributed is not a formal or
+rigid process. Nor is it the sole decision of a centralized person or body.
+Rather it's based on the kind of consensus that makes it very clear to all
+involved, even thoses who are not supportive of a feature, that it should be
+made available. The converse is true as well. How it's made available is
+another discussion entirely.
+
+=head2 Recommended Approach
+
+Generally speaking, features and capabilities should be implemented on as
+high a level as possible. Perl has many ways of extending the language that
+don't even require it to be part of the language or indispensible set of CPAN
+modules that are distributed with C<perl> itself (also known as,  C<dual life
+modules>).
+
+The vastly most commong path for new features is going start with a CPAN
+module. Do this first before making plans to take over Perl with your super
+dooper function ideas.
+
+=over 4
+
+=item Put your functionality on CPAN; 99.9% of features and code supporting
+them belong on CPAN
+
+=item 99.9% of modules on CPAN are not distributed with C<perl> itself and
+never will be.
+
+=item use prototype'd methods defined in a CPAN module for more perlish
+interfaces
+
+=back
+
+=head2 The Promotion Process of CPAN Modules
+
+This section doesn't document a formal process; rather it discusses the path
+that is available for highly useful CPAN modules to be selected to be
+distributed along with C<perl> itself.
+
+TODO: add content
+
+=head1 QUESTION EVERYTHING
+
+This section deals with a series of questions, but is not exhaustive.
+Ultimately, if one wishes to create a feature with the intent of getting it
+into the C<core> Perl distribution, then it must minimally:
+
+TODO: continue to expand
+
+=over 3
+
+=item Provide a very compelling capability the Perl programmers that does not
+already exist in a meaningful form in the existing language or is easily
+available through a module on CPAN
+
+=item Provide an implementation that is targeted at the highest level
+
+=item Is performance an important?
+
+=item Is portability important?
+
+=back
+
+=head1 WORK YOUR PLAN
+
+=head1 SEE ALSO
+
+L<perltomproto>. L<perlcontribhow>.
+
+=head1 ACKNOWLEDGMENTS
+
+=head1 AUTHOR, COPYRIGHT, AND LICENSE
+
+Copyright 2021-2021 oodler577 E<lt>oodler@cpan.org<gt>.
+
+Copyright 2021-2021 XXX E<lt>dhisdhiouwdhewdhe@cpan.org<gt>.
+
+This document may be distributed under the same terms as Perl itself.

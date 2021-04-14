@@ -1,0 +1,772 @@
+=head1 NAME
+
+perltomproto - Far More Than Everything You've Ever Wanted to Know about
+Prototypes in Perl
+
+=head1 DESCRIPTION
+
+The following is a verbatim facimile of information that Tom Christiansen
+originally wrote for the perl5-porters mailing list regarding the prototyping
+feature of Perl.
+
+=head1 ABSTRACT
+
+The major issue with C<prototypes> in Perl is that the experienced programmer
+comes to Perl bearing a pre-conceived but nevertheless completely rational
+notion of what a C<prototype> is and how it works, yet this notion has
+shockingly little in common with what they really do in Perl.
+
+=head1 GREAT EXPECTATIONS
+
+Nearly any programmer you encounter will, when asked what function prototypes
+are for, report the standard text-book answer that function prototypes are
+mainly used to catch usage errors at compile time in functions called with an
+unexpected type or number of parameters. This is what programmers are
+expecting of prototypes, and what Perl does not give them. In some ways, it
+can't.
+
+A few respondents might further observe that prototypes in some circumstances
+may permit the compiler to generate better code, or even code that is more
+correct. The classic example of the latter situation is C<float f = sqrt(2)>.
+Without the prototype of
+
+    double sqrt(double n)
+
+in scope, the compiler not only thinks that C<sqrt()> returns an C<int>, it
+also thinks that that C<2> above should be passed into the function as an
+C<int> rather than as a C<double>, thereby generating incorrect machine code.
+The prototype quietly fixes this, and probably forbids or at least complains
+about passing in anything other than a single number, such as two strings or
+nothing at all.
+
+=head1 HOW PROTOTYPES REALLY WORK IN Perl
+
+With that in mind, let's look at Perl's C<prototypes>. One can argue that
+rather less misunderstanding might have arisen had Larry historically chosen
+to call these C<parameter context templates> rather than C<prototypes>.
+
+These mostly do nothing more that provide an implicit context coercion in
+order to spare the caller from having to sprinkle the code with calls to
+scalar() or to supply backslashes in order to pass aggregates by reference.
+They do comparatively little in the way of checking the type or number of
+arguments. So just what good are they, anyway?
+
+They're good for creating user-defined functions that behave in much the same
+way that Perl's own built-in functions behave with respect to their effects
+upon the parser and upon implicit contexts. This has two benefits: one to
+allow you to omit parentheses; the other to allow you, nay require you, to
+omit a backslash.
+
+For example, the built-in function time() is one that, unlike most new
+functions devised by members of this august body, brooks no argument. That
+means that writing
+
+    $x = time + 20_000_000;
+
+is really the same as writing
+
+    $x = time() + 20_000_000;
+
+The parser itself knows not to look for arguments. Perl gained support for
+C<prototypes> for precisely this very situation. The results of translating C
+preprocessor code via h2ph was wont to take something like
+
+    #define NATALITY 31203691
+
+and convert that C preprocessor code into Perl as:
+
+    sub NATALITY { 31203691 }
+
+The catastrophic problem is that this no longer behaves as simple
+token-for-token replacement where one terminal is replaced by a different one
+without any effect on the surrounding code. Instead what happens is that
+NATALITY becomes a Perl function, which, like all user-defined Perl functions
+in the absence of C<prototypes>, is by nature a variadic one. This produces a
+significantly different parse:
+
+    $x = NATALITY + 1;
+
+silently becomes not
+
+    $x = NATALITY() + 1;
+
+but rather
+
+    $x = NATALITY(+1);
+
+Another untidy consequence of not supplying the parentheses is that the
+compiler now isn't always sure about whether it should be expecting a
+terminal (in the grammar) or not. That means that several tokens, such as
+C<<>, C<<<>, and C</>, all become ambiguous. The C<<> could be the binary
+infix numeric less-than operator, or it could be the left-hand component of
+the circumfix readline operator. The C<<<> could be the binary infix bitwise
+left-shift operator, or it could be the start of here-document. The C</>
+could be the binary infix numeric division operator, or it could be the
+left-hand component of a pattern match quote operation. When you had
+something like this, you couldn't do simple things in simple ways, and it
+confused people. They aren't used to having
+
+    if (NATALITY < 10)
+
+be a syntax error. (The fact that it is still a problem in innumerable other
+situations, such as C<print()> or C<length()>, is little consolation.)
+
+So that's why Larry introduced C<prototypes> into Perl. In particular, the
+void C<prototype>
+
+    sub NATALITY() { 31203691 }
+
+cures this unpleasantry.
+
+You see, C<prototypes> were really a bug fix. Since Larry had already started
+down this path--or, if you would, slope--he kept on going by permitting
+user-defined functions to have (some of) the sorts of parameter context
+templates long enjoyed by built-in functions.
+
+Besides functions of no parameters--I'd call them void functions but that
+risks confusion between the input values and the output values--the other two
+main flavors of parameter context templates are those that take one input and
+those that can take many. Built-in functions that manifest these two
+different behaviours are C<rand()> and C<unlink()> respectively. Sometimes these
+are called C<named unary operators> and C<named list operators>.
+
+So now we can classify all user-defined functions and most built-ins into one
+of three possible sorts, depending on their parameter context templates.
+There is a certain elegance here. The subroutine can through its C<prototype>
+tell its callers (and the compiler) whether it wants zero, one, or any number
+of input values. The caller can communicate its desire to receive as output
+zero, one, or any number of output values back from the subroutine, if that
+subroutine consults the value of C<wantarray()> at run-time.  Since zero, one,
+and as-many-as-I-want are the three nice numbers in programming, this holds
+substantial aesthetic appeal.
+
+These parameter context templates have both compile-time effects and run-time
+effects. The compile-time effect of C<void input> functions has already been
+shown using C<time()>. The monadic functions--that is, the named unary
+operators--also affect the parse. This code
+
+    @a = (rand 10, 20);
+
+will put two elements into the array, because it implicitly parses as
+
+    @a = (rand(10), 20);
+
+That's because somewhere (opcode.pl, ultimately) there's a parameter context
+template for C<rand()> that sets up the function to act like
+
+    sub rand($);
+
+The parser knows that this function is expecting one and only one argument.
+That means that
+
+    @nums = (rand 10, rand 10, rand 10);
+
+is really
+
+    @nums = (rand(10), rand(10), rand(10));
+
+rather than
+
+    @nums = (rand(10, rand(10, rand(10))));
+
+which is what it would have been if C<rand()> had been a variadic function
+instead of a monadic one.
+
+A scalar context template has another effect. It causes an expression
+evaluated to supply the monadic function's input value to be evaluated in
+scalar context. That means that at run-time, C<wantarray()> will now return
+false. This way this code:
+
+    $x = rand fn();
+
+is really
+
+    $x = rand(scalar(fn()));
+
+but only because of the scalar C<prototype>.
+
+Is this kind of thing is of any practical use? Perhaps. One example would be:
+
+   socket(Sock, PF_INET, SOCK_STREAM, getprotobyname('tcp'))
+
+The built-in C<socket()> function is not a variadic one. It has a particular
+parameter context template (a.k.a. C<prototype>) that assures that
+C<getprotobyname()> shall be called in scalar context, not list context. This
+makes C<getprotobyname()> return a single value instead of a list of values.
+
+As with C<socket()>, which takes four scalar (I'm fudging a bit; the first is a
+handle) arguments, you yourself can create functions that take several scalar
+arguments. For example, the built-in dyadic function C<atan2(>) (or prefix named
+binary operator, I suppose) has an effective C<prototype> of:
+
+    sub atan2($$);
+
+However, unlike monadic functions where the parser only gobbles as many
+arguments as the function wants, such a C<prototype> here will not cause the
+parser to only grab two arguments. That means that
+
+    @a = (atan2 1, 2, 3);
+
+does not become
+
+    @a = (atan2(1, 2), 3);
+
+as one would be likely to infer upon learning how C<rand()> works. Instead, it
+is a syntax error at compile time. However, there is a run-time effect.
+Something like this:
+
+    $x = atan2(fy(), fx())
+
+calls both those functions in scalar context, supplying their two single
+return values as input to C<atan2()>.
+
+Reference Prototypes I said that C<prototypes> can do two things: one, to
+allow you to dispense with parentheses, and two, to allow you on occasion to
+dispense with a backslash. Let's now look at the second case.
+
+When you specify a C<prototype> of C<$>, C<@>, or C<%>, you may also precede
+that with a backslash. (There are also C<prototype> possibilities of C<&> or
+C<*>, but they are not necessary for this discussion.) This parameter context
+template means that the programmer must use that exact symbol, and Perl will
+then supply the backslash to pass that argument by reference.
+
+For example, suppose you wanted a function that stuck key-value pairs into a
+hash, somewhat reminiscent of the way C<push()> places additional elements into
+an array. Here's how you'd do that:
+
+    sub hpush(\%@) {
+	my $href = shift;       # NB: not % while ( my ($k, $v) = splice(@_,
+	0, 2) ) {
+	    $href->{$k} = $v;
+	}
+    } hpush(%pieces, "queen" => 9, "rook" => 5);
+
+This works out rather nicely. As you see, here as in so many other areas,
+Perl's C<prototypes> work out well when they are used for what they were
+designed to do--that is, to emulate built-in functions by allowing calls to a
+user-defined subroutine to be subject to the same implicit parameter context
+conversions as built-ins are.
+
+Prototype Bugs So what's the problem? It's not just one, actually. There are
+rather more than you probably realize. There are definitely more than someone
+who simply hears that Perl has C<prototypes> is likely to imagine. I know of
+a few bugs, which I'll get out of the way first. These can be fixed. The
+design issues are the important matters, and those are discussed in the next
+section..
+
+One bug with C<prototypes> is that if you call:
+
+    $x = fn(@a); sub fn(\@) { ... }
+
+then you get no warning to the effect that Perl already assumed that C<fn()> was
+just a standard variadic function; that is, one whose parameter context
+template is simply C<sub fn(@)>. This should be reported, much as when C
+complains when it catches you using a function without declaring its return
+type and thus making the compiler guess the function's return type to be int,
+but then you go off and later on in the source declare the function to be of
+some other return type.
+
+Another bug is that you can at compile time declare C<prototypes> with
+multiple backslashes, such as fn(\\@). These are accepted at compile-time,
+but at run-time, raise an exception.
+
+That's not the only thing that is silently accepted but completely useless.
+
+Consider
+
+    sub fn(@@) { ... } sub fn(%%) { ... } sub fn(%$) { ... } sub fn($%) { ...
+    } sub fn(@$) { ... } sub fn($@) { ... } sub fn(%@) { ... } sub fn(@%) {
+    ... }
+
+What do those do? They don't raise an exception, but neither will they do
+anything useful for you. This will be explained more in the text below.
+
+Finally, there have historically been bugs related to the * and &
+C<prototypes>. I know that Sarathy has worked on at least some of them, and I
+am unsure on their exact status.
+
+Prototype Problems This section, I imagine, is what you've all been waiting
+for, and I commend you for having read everything up to this point. I know
+people hate to read, but I felt that without the proper background that I
+attempted to provide above, I would not reach many of you when it came time
+to explaining the grave problems inherent in Perl's implementation of
+C<prototypes>.
+
+That time is now.
+
+I suppose you could class all these problems into two groups, one comprising
+those cases where Perl doesn't do what you want it to, and the other
+comprising those cases where Perl does what you don't want it to. Both are
+highly annoying.
+
+The problems that arise from C<prototypes> are many. Some are due to
+inappropriate expectations on the part of the users, who for quite obvious
+reasons expect Perl's C<prototypes> to work like prototypes instead of like
+implicit context coercion templates for input parameters to the function.
+
+Sometimes users ask for support of exact prototypes for strings or numbers or
+integers or floats or booleans. These requests are reasonably easy to fend
+off. You just tell them that a scalar can happily hold any of these at any
+time. You can't know from one moment to the next whether C<$x> contains one or
+the other of these. Go on to point out that some things just have to be done
+through run-time assertions or contract-validations. Like what? Well, such
+as, oh, a dyadic function whose arguments should be two integers representing
+two opposing sides of a right triangle whose hypotenuse is also an integral
+number of units. Or a function that requires a 47-digit prime number as
+input. :-) Some things you just have to check at run-time.
+
+You might find yourself on slightly shakier ground when they ask how to
+ensure and enforce that arguments be of particular object types. It's shakier
+because strict typing is often more important to those whose first stab at
+any problem is to throw an object at it (and you wouldn't want them to think
+you the problem). But you can still work your way out of this squeeze if you
+just remind them that first of all, Perl is dynamically typed (that's what we
+did for the previous paragraph) and that secondly, you should be using
+method-call dispatch to get polymorphism. If the OO folks continue to object,
+try redirecting them to the documentation for Damian Conway's
+L<Class::MultiMethod> module. This should suffice to give you enough breathing
+room to make your escape. Plus it might even solve their problem directly or
+inspire them to approach the problem from a completely different direction.
+
+But you can only dodge the more horrific issues for so long. These are the
+ones that just seem broken as designed, at least if you're coming from
+certain cultural prejudices. And there may not really be much we can do about
+these matters, either, because they may be inevitable consequences of how the
+Perl language works. These C<surprises>, or brokennesses if you would, are
+side-effects of Perl's design and the initial purpose of C<prototypes>. This
+puts them somewhere between difficult and impossible to C<fix>.
+
+Problems with Regular Prototypes The first surprise is that when Perl
+programmers see C<$>, C<@>, and C<%>, they usually think C<scalar>, C<array>,
+and C<hash> respectively. This isn't completely accurate in all cases, but it
+is, nevertheless, what they often think.
+
+So when the user sees a C<prototype> of C<$>, the primrose programming path
+leads them to believe, lamentably, that the compiler will complain if they
+pass something in that's not a scalar. Nothing could be further from the
+truth!
+
+The built-in function C<length()> has a C<$> prototype. That doesn't mean that
+you can hope for an error if you don't pass in a single scalar value. It
+means that whatsoever you pass in shall be subtly converted into a scalar
+behind your back and under your nose (yes, these sorts of sordid shenanigans
+get you both coming and going). This isn't what could even charitably be
+referred to as error checking. This is implicit casting between incompatible
+types.
+
+    @array = (1 .. 10); print length(@array);
+
+You might think that would be an error, but it's not, because there exists an
+implicit coercion rule for arrays taken in scalar context: it's the number of
+elements in that array. That number, in this case, is 10. Now then, what do
+you imagine the length of 10 to be? That question doesn't really make much
+sense as stated (neither did the last one, though), but it just so happens
+that you've lucked out again: there's another implicit coercion rule for
+treating a number like a string. That yields C<10>, a string which you will
+note is two bytes long. Thus the answer is 2.
+
+Nifty, eh?
+
+If you think that's bizarre, consider this:
+
+    print length(%ENV)
+
+Surely that's a compilation error? Silly programmer, of course it's not! This
+is Perl. You would be astonished at just how much Sturm und Drang the Perl
+compiler will put up with--and come to think of it, you probably are, and on
+a regular basis. Since you gave Perl a ridiculous request, Perl dutifully
+provides you in return a ridiculous response--but not an error; oh no, not
+that! The scalar sense of a hash is a string representing its internal
+fullness. This might be, for example, C<29/64>. Noting that this is a string
+of five bytes, you can probably by now surmise the printed value: 5.
+
+Nifty, eh?
+
+That means that a function with a scalar prototype does not complain if
+something is passed to it that's not a scalar. It simply silently coerces
+into something it never was, and in all likelihood, was never meant to be in
+the first place.
+
+Now, there are a few rare places where the C<$> prototype will actually catch
+you making a mistake. Not many, but some. One is when you pass it a list.
+Remember that lists and arrays aren't the same; this distinction is critical
+in later examples. This
+
+    print length("fred", "barney")
+
+will raise a compile-time exception, because you've passed two arguments to
+C<length()>, but it wanted only one.
+
+However, not all lists are so fortunate.
+
+    sub fn1 { return ("fred", "barney") } print length fn1();
+
+The answer there is 6. Why is that? Because you returned a list, which in
+scalar context ended up being just the last element, C<barney>, whose length
+was 6.
+
+But now try this:
+
+    @names = ("fred", "barney") sub fn2 { return @names }
+
+    print length fn2();
+
+This time the answer is 1. Why? Because C<fn2()> was called in scalar context,
+and thus C<@names> is in scalar context when it's returned. There are two
+elements. The length of C<2> is, of course, 1 byte.
+
+So although a literal list can't be brazenly given to C<length()> directly,
+placing a list in a function call whose result is passed to C<length()> is,
+unavoidably, ok--for surprising values of C<ok>. And notice also how putting
+an array in the return is completely different from putting a list there.
+
+But even some literal lists are permitted if supplied as arguments to
+C<length()>.
+
+Here's one:
+
+    print length(@names[1,0])
+
+This is not a compiler error. What's the answer? It's 4, because a slice is
+just a list, and a list in scalar context is the last thing, which in this
+case is C<fred>, whose length is 4. You might think that the compiler would
+catch this, but it doesn't. And it certainly wouldn't know what to do with
+
+    print length(@names[@indices])
+
+Because there's no way--at least at compile time--to know whether C<@indices>
+might contain just one thing, the compiler isn't completely certain that
+you're doing something nutty. The maintainers of your code might be, but the
+compiler is more, well, permissive.
+
+It's especially important not to add prototypes later to existing function.
+If you do, you may change the parse. Imagine a function like this
+
+    sub fn {
+	my $n = shift; ...
+    }
+
+And then called it these ways:
+
+    fn($x) @a = ($x); fn(@a); fn(fy());
+
+All would be well. If you then added a C<sub fn($)> C<prototype>, existing code
+above would break. If your function were expecting two arguments:
+
+    sub fn {
+	my ($i,$j) = @_; ...
+    }
+
+And you called it these ways:
+
+    fn($x, $y) @a = ($x, $y); fn(@a); fn(fy());
+
+Then later adding a sub C<fn($$)> C<prototype> would really be bad news. In
+fact, it would be a compilation error, because you can't just pass in C<@a>
+anymore, even if you're sure it contains two elements.
+
+As you see, this scalar C<prototype> is in no way useful for checking the
+types or number of arguments, which is the thing virtually everyone expects a
+prototype to be useful for. And if you think C<$> is bad, there's no silver
+lining in the clouds coming over the horizon. The rest of the C<prototypes>
+aren't any better.
+
+Let's examine the C<@> C<prototype>. What's that? Is it an array? No, it's
+not. It just looks like that. It's merely a list. Is it a required list? Why
+no, it's not. You're welcome to supply a list of no elements; that is, omit
+it altogether.
+
+    sub fn(@) { ... }
+
+Can be called not only as
+
+    fn(@array)
+
+but also as
+
+    fn() fn($scalar) fn($scalar1, $scalar2) fn(%hash) fn(zyx())
+
+and so on and so forth. The C<@> really just says that this is a normal Perl
+function, which means it's variadic. It pretty much means the same as if you
+had used no C<prototype> at all.
+
+You could, if you were careful, use this in conjunction with C<$>, and then
+it might have a tiny bit of meaning. For example:
+
+    sub fn($@) {
+	my ($scalar, @array) = @_; print "Got $scalar and @array\n";
+    }
+
+This isn't really much fun, either. It doesn't help you with the number or
+types of arguments very much. Oh, calling it with nothing at all is flagged
+at compile time, but that's it. The following crazinesses are all permitted,
+despite the C<$@> prototype. The first part in all the calls below will be
+cast into the scalar abyss.
+
+    fn( xyz() ) fn( xyz(), xyz() ) fn( xyz(), xyz(), xyz() ) fn($scalar)
+    fn(@array) fn($scalar, @array) fn(@array, @array) fn(@array, @array,
+    @array) fn($scalar, %hash) fn(%hash) fn(%hash, %hash) fn($scalar, @array,
+    %hash)
+
+It sure looks like that C<$@> signature there is more trouble than it's
+worth, now doesn't it? There's also the issue C<@@> is accepted as a
+C<prototype>, but actually means nothing. Or the one that C<@$> is accepted,
+but means the same thing as C<@>. You aren't going to get anything evaluated
+in a scalar context that way.
+
+Since we're having so much fun, let's move on to C<%>. This C<prototype>
+means what? That we're expecting a hash? Not at all! In fact, it is
+completely identical to a C<prototype> of just C<@>. Everything I said about
+C<@> is true for C<%>, because they are the same! You can't get any type
+checking here. It doesn't even bother to check whether you have an even
+number of arguments. Given a C<prototype> of
+
+    sub fn(%) { }
+
+these are all still licentiously permitted:
+
+    fn() fn($scalar) fn($scalar1, $scalar2) fn(@array) fn(@array1, @array2)
+    fn(%hash) fn(%hash1, %hash2) fn(zyx())
+
+You get the same issues with C<%%>, C<%$>, and C<$%> as we saw earlier with
+C<@> instead of C<%>.
+
+So you see, just like C<$> and C<@>, C<%> cannot be used for checking the
+type or number of arguments, since it doesn't care about these matters. In
+fact, it really doesn't care about anything at all. It's even worse than the
+already useless C<@>. The C<%> is just sitting there as though it had no
+other purpose in life but to confuse you. I suspect it may have succeeded.
+This is not your fault, though.
+
+Problems with Reference Prototypes What about the reference C<prototypes>? At
+some level, they're more predictable than C<$>, C<@>, C<%>, which please
+remember meant scalar, list, and um, well, list, respectively. You can also
+use C<\$>, C<\@>, and C<\%> to indicate references to scalars, arrays, and
+hashes, respectively. (Why C<&> really means reference to function instead of
+using C<\&> for that, I leave as a meditation for the reader.) But I'm afraid
+that these, too, may often be more trouble than they're worth.
+
+You see, those symbols don't actually say that you must pass in a scalar
+reference, an array reference, and a hash reference. Rather, they say you
+must pass in a scalar variable, an array variable, and a hash variable. That
+means that the compiler insists upon seeing a properly notated variable of
+the given type, complete with C<$>, C<@>, or C<%> in that slot. You must not
+use a backslash. The compiler silently supplies the backslash for you. The
+C<hpush()> function shown above demonstrates this kind of thing in action.
+
+To see how this works when you use C<\@> in the C<prototype>, you haven't
+declared a function as taking a reference to an array. Rather, you've
+declared one that takes an array, which the compiler will pass by (implicit)
+reference to you.
+
+There are times when this is annoying. Consider the good old C<push()> function.
+Its C<prototype> is C<\@@>, which means that it takes one array and an
+optional list as arguments, and that that array shall be passed by reference.
+Think of how often you've been forced to do something like
+
+    push @{ $hash{$string} }, $value;
+
+Why can't you just do this:
+
+    push $hash{$string}, $value;
+
+It's because of the C<prototype>. You must use the C<@> sign. Yes, I know
+there's probably a reference to an array there, but that's not what the
+prototype says. The compiler doesn't want a reference to an array (contrary
+to popular misunderstanding). It wants an array, and you haven't given it one
+with a real C<@> sign.
+
+Passing in more than one aggregate into a Perl function is a problem, because
+aggregates interpolate into parameter lists. For example, C<add_vecpair(@these>,
+@those)> will not normally be able to distinguish between the first array and
+the second one.
+
+Let's make a function that takes two arrays of numbers and returns a new list
+where each element is the sum of the corresponding elements of the two input
+lists. That subroutine definition would look like this:
+
+    sub add_vecpair( \@ \@ ) { ....
+
+Make sure that that definition is seen by the compiler before it compiles any
+calls to the function. Once this is done, the function can (and must) then be
+called this way:
+
+    @c = add_vecpair(@a, @b);
+
+Technically, once any function's definition has been seen by the compiler,
+you don't need to use the parentheses on the call. This is the same thing:
+
+    @c = add_vecpair @a, @b;
+
+Neither of these calls looks as though it's passing array references in, but
+because of the prototype, they are. The compiler adds the backslashes for
+you. This can be annoying when one of the elements isn't a literal array. For
+example, under the prototype, this call is technically illegal, even though
+it would appear fine:
+
+    @c = add_vecpair(@a, [ values %hash ]);   # prototype conflict
+
+This is where you find yourself fighting with the fastidious prototype.
+Here's how to make it shut up:
+
+    @c = add_vecpair(@a, @{ [ values %hash ] } );
+
+This is the same kind of thing you have to do when you use a prototyped
+built-in in ways it's not expecting. For example,
+
+    if ($x > 10) {
+	push @a, $value;
+    } else {
+	push @b, $value;
+    }
+
+That cannot be written as
+
+    push $x > 10 ? @a : @b , $value;
+
+It instead requires a rather less obvious indirect approach. The extra
+backslash and C<@{}> dereferencing are there to keep the C<push()> function's
+formal prototype from complaining unnecessarily.
+
+    push @{ $x > 10 ? \@a : \@b }, $value;
+
+If the function in question is user-defined instead of built-in, you can
+disable the compiler's meddlesome prototype checking just by prefixing the
+function call with an ampersand. You'll just have to make sure the types on
+the call are right yourself then. For example:
+
+    @c = &add_vecpair(\@a, [ values %hash ]);   # `&' ignores prototype
+
+If the preceding sequence isn't enough to convince you to avoid prototypes in
+most if not all situations, think about this: by enforcing prototypes, you've
+broken the beautiful model of functions built to take or return any number of
+arguments. It would have been more robust to have written the function to
+accept any number of array references, and sum up the corresponding elements
+of each. The extra backslash and C<@{}> dereferencing are there to keep the
+persnickety prototype checks from carping unnecessarily. But what will you do
+without prototypes? You'll just have to make sure the types on the call are
+right yourself then, just as you always have.
+
+For example:
+
+    sub add_vecs {
+	my($vec, @result); foreach $vec (@_) {
+	    for (my $i = 0; $i < @$vec; $i++) {
+		$result[$i] += $vec->[$i]
+	    }
+	} return @result;
+    } @sumvec = add_vecs  \@a, \@b, \@c, \@d; @sumvec = add_vecs \(@a,  @b,
+    @c,  @d);   # same thing
+
+Now you can pass in C<\@foo>, C<[ whatever ]>, or C<$aref>, where that scalar variable
+contains a reference to an array. What happens if you pass in the wrong
+thing? You take an exception at run time. But this is the same situation if
+you were forced to pass in C<@$aref> instead under a prototype.
+
+=head1 Appraising Prototypes
+
+So, have Perl's C<prototypes> worked out ok? If the goal is to provide
+something like what other languages call prototypes, something to let the
+compiler catch errors of type and number occurring in calls to subroutines,
+then the answer is certainly that they have not.
+
+Of course, you could try to argue that that's not a fair question, since
+C<prototypes> were really supposed to be context coercion templates,
+something to let you emulate a built-in function. This dodges the fact that
+Perl's C<prototypes> violate the principle of least surprise, but so be it.
+Even in this limited capacity, their success has been no more than limited.
+
+That's because there are still a lot of built-in functions that cannot be
+emulated, even given prototypes. There are odd-ball functions, like C<defined(>)
+and C<exists(>) and C<undef(>), all of which impose a type of context on their
+arguments that you cannot begin to emulate with existing Perl C<prototypes>.
+You also cannot use these to prototype new pseudo-quoting functions like C<m//>,
+C<s///>, C<tr///>, C<y///>, C<q//>, C<qq//>, C<qx//>, C<qw//>, and C<qr//>.
+
+Of greater importance are the functions that you cannot use Perl to
+prototype, because they include indirect objects in their signatures.
+C<sprint()> and C<printf()> are a bit annoying, although not for just the
+insurmountable reason. For example, consider this famous pair's true
+prototype definitions from opcode.pl:
+
+    sprintf       sprintf        ck_fun_locale   mfst@   S L prtf
+    printf         ck_listiob      ims@    F? L
+
+The first nastiness is that while
+
+    printf @args
+
+is ok, that
+
+    sprintf @args
+
+is not. Why? Because the C<sprintf()> function has the compiler enforcing a
+scalar context, so it gets passed the number of elements in C<@args> as the
+format, leaving the list empty. But C<printf()> doesn't do that. It takes the
+format from the first element of the list.
+
+In the case of C<printf()>, the compiler is busy doing something else, anyway.
+It's considering whether you supplied the optional filehandle. You can in
+theory (modulo bugs) specify a filehandle in a C<prototype> (or at least a
+typeglob) using the C<*> symbol. And you can also specify optional trailing
+arguments. But you cannot specify an optional leading argument, the way
+C<print()>, C<printf()>, C<sort()>, C<system()>, and C<exec()> all tolerate.
+
+Even if an optional leading argument were permitted, this would just increase
+the potential for confusion. That's because this comma-less argument is
+really the one that falls in the indirect object slot. Indirect objects are
+pretty wicked. They are restricted to BAREWORDS, unsubscripted scalar
+variables, or C<{BLOCKS}>. That's why you can't say:
+
+    printf $FH{$some_name} $some_fmt, @some_data;
+
+And no, the bloated and silly L<IO::Handle> module doesn't C<fix> this in any
+way.
+
+If you encourage a prototype for the indirect object, you'll get more people
+who will be writing code that uses indirect objects, and more people whom
+this will confuse. And let's not even begin to talk about the problems of
+stacking indirect object calls. It's not a pretty picture.
+
+=head1 Summary
+
+In summary, it should be no surprise to you who've read this complete note
+that I myself do not use prototypes. I hope that now you'll realize why.
+
+A larger and more pressing question is whether we should create named
+parameters. That is, something like
+
+    sub func ($this, $that) { ... }
+
+or perhaps even
+
+    sub func (@these, @those) { ... }
+
+or more likely
+
+    sub func (\@these, \@those) { ... }
+
+My conclusion is that just adding names to Perl's existing C<prototypes>,
+which are really mostly just parameter context templates for implicit
+coercions, would be a mistake. It would encourage the use of something that's
+extremely confusing at best, and at worst, fundamentally broken by design.
+This document is really called Prototypes Considered Harmful, but I don't
+think you would have believed me if I had said that right at the start.
+
+--tom
+
+=head1 SEE ALSO
+
+L<perlnewfeat>.
+
+=head1 ACKNOWLEDGMENTS
+
+=head1 AUTHOR, COPYRIGHT, AND LICENSE
+
+Copyright ?? - 2021 Tom Christiansen E<lt>tchrist@perl.com<gt> as originally
+written for the perl5-porters mailing list.
+
+Additionally, copied verbatim from L<https://perlmonks.org/?node_id=861966>
+with the addition of POD formatting.
+
+This document may be distributed under the same terms as Perl itself.
